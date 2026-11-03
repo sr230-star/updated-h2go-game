@@ -12,20 +12,46 @@ const questions = [
   { question: "Why can collecting water be a barrier to education?", answers: ["It makes books heavy", "It can take hours away from school", "It changes the school calendar", "It makes classrooms colder"], correct: 1, fact: "In many places, children—especially girls—spend hours collecting water instead of attending school." }
 ];
 
-const GAME_TIME = 60;
+const difficultySettings = {
+  easy: { label: "Easy", time: 60, penalty: 0, goal: 500 },
+  normal: { label: "Normal", time: 45, penalty: 50, goal: 700 },
+  hard: { label: "Hard", time: 30, penalty: 100, goal: 900 }
+};
+const winMessages = [
+  "You did it! Every answer is making waves!",
+  "Amazing work! You reached the goal!",
+  "You're a clean-water champion!"
+];
+const tryAgainMessages = [
+  "Great effort! Try again and keep making waves.",
+  "So close! A little more practice will get you there.",
+  "Keep going—you can reach the goal next time!"
+];
+const milestoneMessages = [
+  "Great start! 💧",
+  "Halfway there!",
+  "Almost there, keep going!",
+  "Goal reached! You're making waves!"
+];
+
+let selectedMode = "normal";
 let gameActive = false;
 let timerInterval;
-let timeLeft = GAME_TIME;
+let timeLeft = difficultySettings.normal.time;
 let score = 0;
 let questionIndex = 0;
 let shuffledQuestions = [];
 let celebrationTimeout;
+let answerLocked = false;
+let passedMilestones = new Set();
 
 const screens = document.querySelectorAll(".screen");
 const timerElement = document.getElementById("timer");
 const scoreElement = document.getElementById("score");
 const answerButtons = document.getElementById("answer-buttons");
 const confettiElement = document.getElementById("confetti");
+const modeGoalElement = document.getElementById("mode-goal");
+const jerryCanRow = document.getElementById("jerry-can-row");
 
 // Celebrate a successful finish without adding an external dependency.
 function celebrateWin() {
@@ -63,12 +89,17 @@ function startGame() {
   confettiElement.classList.remove("active");
   confettiElement.innerHTML = "";
   gameActive = true;
-  timeLeft = GAME_TIME;
+  const settings = difficultySettings[selectedMode];
+  timeLeft = settings.time;
   score = 0;
   questionIndex = 0;
+  answerLocked = false;
+  passedMilestones = new Set();
   shuffledQuestions = shuffle(questions);
   timerElement.textContent = timeLeft;
   scoreElement.textContent = score;
+  modeGoalElement.textContent = `${settings.label} · Goal: ${settings.goal}`;
+  jerryCanRow.replaceChildren();
   showScreen("question-screen");
   loadQuestion();
   timerInterval = setInterval(updateTimer, 1000);
@@ -87,10 +118,13 @@ function endGame() {
   gameActive = false;
   clearInterval(timerInterval);
   document.getElementById("final-score").textContent = score;
-  const peopleHelped = score / 100;
-  document.getElementById("impact-message").textContent = `You helped ${peopleHelped} people get clean water!`;
+  const settings = difficultySettings[selectedMode];
+  const didWin = score >= settings.goal;
+  document.getElementById("impact-message").textContent = didWin
+    ? winMessages[Math.floor(Math.random() * winMessages.length)]
+    : tryAgainMessages[Math.floor(Math.random() * tryAgainMessages.length)];
   showScreen("game-over-screen");
-  if (score >= 20) celebrateWin();
+  if (didWin) celebrateWin();
 }
 
 // Put the next question and its four answers on the page.
@@ -108,17 +142,62 @@ function loadQuestion() {
 
 // Score the selected answer and show a fact before moving on.
 function chooseAnswer(answerIndex) {
-  if (!gameActive) return;
+  if (!gameActive || answerLocked) return;
+  answerLocked = true;
   const currentQuestion = shuffledQuestions[questionIndex];
   const isCorrect = answerIndex === currentQuestion.correct;
-  score = Math.max(0, score + (isCorrect ? 100 : -50));
+  const settings = difficultySettings[selectedMode];
+  const points = isCorrect ? 100 : -settings.penalty;
+  score += points;
   scoreElement.textContent = score;
-  document.getElementById("feedback-points").textContent = isCorrect ? "+100" : "-50";
-  document.getElementById("feedback-points").classList.toggle("wrong", !isCorrect);
-  document.getElementById("feedback-screen").classList.toggle("wrong", !isCorrect);
-  document.getElementById("feedback-title").textContent = isCorrect ? "Correct!" : "Not quite!";
-  document.getElementById("feedback-message").textContent = currentQuestion.fact;
-  showScreen("feedback-screen");
+  if (isCorrect) addJerryCan();
+  checkMilestones(score - points, score, settings.goal);
+
+  const buttons = answerButtons.querySelectorAll(".answer-button");
+  buttons.forEach((button) => {
+    const isCorrectButton = Number(button.dataset.answerIndex) === currentQuestion.correct;
+    if (isCorrectButton) {
+      button.classList.add("correct-answer");
+    } else {
+      button.classList.add("fading-out");
+      window.setTimeout(() => button.remove(), 260);
+    }
+  });
+  window.setTimeout(() => {
+    if (!gameActive) return;
+    document.getElementById("feedback-points").textContent = points > 0 ? `+${points}` : points;
+    document.getElementById("feedback-points").classList.toggle("wrong", !isCorrect);
+    document.getElementById("feedback-screen").classList.toggle("wrong", !isCorrect);
+    document.getElementById("feedback-title").textContent = isCorrect ? "Correct!" : "Not quite!";
+    document.getElementById("feedback-message").textContent = currentQuestion.fact;
+    showScreen("feedback-screen");
+  }, 300);
+}
+
+function addJerryCan() {
+  const can = document.createElement("img");
+  can.src = "img/water-can-transparent.png";
+  can.alt = "Collected jerry can";
+  can.className = "collected-can";
+  jerryCanRow.appendChild(can);
+}
+
+function checkMilestones(previousScore, currentScore, goal) {
+  [0.25, 0.5, 0.75, 1].forEach((percentage, index) => {
+    const threshold = goal * percentage;
+    if (previousScore < threshold && currentScore >= threshold && !passedMilestones.has(index)) {
+      passedMilestones.add(index);
+      showMilestone(milestoneMessages[index]);
+    }
+  });
+}
+
+function showMilestone(message) {
+  const banner = document.createElement("div");
+  banner.className = "milestone-banner";
+  banner.textContent = message;
+  document.body.appendChild(banner);
+  window.setTimeout(() => banner.remove(), 2000);
 }
 
 // Move forward, or finish once all ten questions have been answered.
@@ -127,6 +206,7 @@ function showNextQuestion() {
   if (questionIndex >= shuffledQuestions.length) {
     endGame();
   } else {
+    answerLocked = false;
     showScreen("question-screen");
     loadQuestion();
   }
@@ -137,3 +217,13 @@ document.getElementById("play-again-button").addEventListener("click", startGame
 document.getElementById("next-button").addEventListener("click", showNextQuestion);
 document.getElementById("how-to-play-link").addEventListener("click", () => showScreen("how-to-play-screen"));
 document.getElementById("got-it-button").addEventListener("click", () => showScreen("intro-screen"));
+document.querySelectorAll(".difficulty-button").forEach((button) => {
+  button.addEventListener("click", () => {
+    selectedMode = button.dataset.mode;
+    document.querySelectorAll(".difficulty-button").forEach((modeButton) => {
+      const isSelected = modeButton === button;
+      modeButton.classList.toggle("selected", isSelected);
+      modeButton.setAttribute("aria-pressed", String(isSelected));
+    });
+  });
+});
